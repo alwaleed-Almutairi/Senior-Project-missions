@@ -1,13 +1,29 @@
+"""
+mission2_inspect_cameratest.py
+──────────────────────────────
+Runs Mission 2 inspection using the REAL RealSense camera (color + depth)
+but WITHOUT a drone connection. Drone movement is simulated.
+
+This proves:
+  - RealSense D435 color + depth streams work
+  - Reads mission2_route.xlsx correctly
+  - Captures close-up images at each crack location
+  - Measures depth at each crack location
+  - Generates final_report.xlsx with all data
+
+Usage:
+  python mission2_inspect_cameratest.py
+"""
+
 import asyncio
 import cv2
 import numpy as np
-import pandas as pd
 import pyrealsense2 as rs
-import argparse
+import pandas as pd
 import os
+import time
 from datetime import datetime
-from mavsdk import System
-from mavsdk.offboard import OffboardError, PositionNedYaw
+
 
 def load_cracks_from_excel(filename="mission2_route.xlsx"):
     cracks = []
@@ -16,8 +32,7 @@ def load_cracks_from_excel(filename="mission2_route.xlsx"):
         df = pd.read_excel(filename, sheet_name="VisitOrder")
         for index, row in df.iterrows():
             if row["node_type"] != "CRACK":
-                continue  
-
+                continue
             cracks.append({
                 "id":         str(row["crack_id"]).strip(),
                 "x":          float(row["x"]),
@@ -25,7 +40,6 @@ def load_cracks_from_excel(filename="mission2_route.xlsx"):
                 "z":          float(row["z"]),
                 "crack_type": str(row["crack_type"]) if "crack_type" in df.columns and pd.notna(row.get("crack_type")) else "Unknown",
                 "confidence": float(row["confidence"]) if "confidence" in df.columns and pd.notna(row.get("confidence")) else 0.0,
-                "image_name": str(row["image_name"]) if "image_name" in df.columns and pd.notna(row.get("image_name")) else "",
             })
         print(f"Successfully loaded {len(cracks)} cracks.")
         return cracks
@@ -33,26 +47,32 @@ def load_cracks_from_excel(filename="mission2_route.xlsx"):
         print(f"ERROR reading excel file: {e}")
         return []
 
+
 async def stream_and_sleep(duration, pipeline):
-    """Waits for the drone to move while keeping the RealSense color feed live."""
+    """Waits while keeping the RealSense color feed live."""
     end_time = asyncio.get_event_loop().time() + duration
+    latencies = []
+
     while asyncio.get_event_loop().time() < end_time:
+        t_start = time.perf_counter()
         frames = pipeline.poll_for_frames()
         if frames:
             color_frame = frames.get_color_frame()
             if color_frame:
                 frame_data = np.asanyarray(color_frame.get_data())
                 cv2.imshow("Ground Station - RealSense Live", frame_data)
-                cv2.waitKey(1)
-        await asyncio.sleep(0.03) 
+                t_end = time.perf_counter()
+                latencies.append((t_end - t_start) * 1000)
+        cv2.waitKey(1)
+        await asyncio.sleep(0.03)
 
-async def monitor_battery(drone, battery_state):
-    """Background task to continuously monitor battery life."""
-    async for battery in drone.telemetry.battery():
-        battery_state["remaining"] = battery.remaining_percent
+    if latencies:
+        avg = sum(latencies) / len(latencies)
+        print(f"   [LATENCY] Avg: {avg:.1f} ms | Max: {max(latencies):.1f} ms | Frames: {len(latencies)}")
+
 
 def generate_report(report_data, output_path="final_report.xlsx"):
-    """Generates the final inspection report as an Excel file."""
+    """Generates the final inspection report as a styled Excel file."""
     if not report_data:
         print("No inspection data to report.")
         return
@@ -66,7 +86,6 @@ def generate_report(report_data, output_path="final_report.xlsx"):
         df.to_excel(writer, sheet_name="Report", index=False)
         ws = writer.sheets["Report"]
 
-        # Header styling
         header_fill = PatternFill("solid", fgColor="1F4E79")
         header_font = Font(bold=True, color="FFFFFF", size=11)
         thin_border = Border(
@@ -81,14 +100,12 @@ def generate_report(report_data, output_path="final_report.xlsx"):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
 
-        # Data row styling
         for row_idx in range(2, len(df) + 2):
             for col_idx in range(1, len(df.columns) + 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.alignment = Alignment(vertical="center")
                 cell.border = thin_border
 
-        # Column widths
         col_widths = {
             "A": 12, "B": 10, "C": 10, "D": 10,
             "E": 20, "F": 12, "G": 8, "H": 8, "I": 8,
@@ -120,9 +137,7 @@ def generate_report(report_data, output_path="final_report.xlsx"):
                 len(df[df["image_path"] != ""]),
             ],
         }
-        df_summary = pd.DataFrame(summary_data)
-        df_summary.to_excel(writer, sheet_name="Summary", index=False)
-
+        pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
         ws2 = writer.sheets["Summary"]
         for col_idx in range(1, 3):
             cell = ws2.cell(row=1, column=col_idx)
@@ -140,7 +155,6 @@ def generate_report(report_data, output_path="final_report.xlsx"):
         ).reset_index()
         type_summary.columns = ["Crack Type", "Count", "Avg Confidence", "Avg Depth (mm)"]
         type_summary.to_excel(writer, sheet_name="ByType", index=False)
-
         ws3 = writer.sheets["ByType"]
         for col_idx in range(1, 5):
             cell = ws3.cell(row=1, column=col_idx)
@@ -163,81 +177,60 @@ def generate_report(report_data, output_path="final_report.xlsx"):
     print(f"  Report saved to  : {os.path.abspath(output_path)}")
     print(f"{'='*50}")
 
+
 async def run():
-    parser = argparse.ArgumentParser(description="Real Hardware: Close-up Crack Inspection")
-    parser.add_argument('--port', type=str, default="serial:///dev/ttyACM0:921600", help="Serial port connection")
-    args = parser.parse_args()
+    print("=" * 60)
+    print("  MISSION 2 — CAMERA TEST (No Drone Required)")
+    print("  Tests: RealSense Color + Depth + Excel Pipeline")
+    print("=" * 60)
 
     target_cracks = load_cracks_from_excel("mission2_route.xlsx")
-    if not target_cracks: return
+    if not target_cracks:
+        print("No cracks to inspect. Run mission2_solverTSP.py first.")
+        return
 
-    print("REAL MODE: Starting Intel RealSense pipeline (Color + Depth)...")
+    print("\nStarting Intel RealSense pipeline (Color + Depth)...")
     pipeline = rs.pipeline()
     config = rs.config()
     try:
         config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
         config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
         pipeline.start(config)
-        
+
         align_to = rs.stream.color
         align = rs.align(align_to)
+
+        print("RealSense D435 initialized (Color + Depth)!")
         await stream_and_sleep(2, pipeline)
     except Exception as e:
         print(f"RealSense failed to initialize: {e}")
         return
 
-    drone = System()
-    print(f"Connecting to drone via {args.port}...")
-    await drone.connect(system_address=args.port)
-
-    print("Waiting for drone to connect...")
-    async for state in drone.core.connection_state():
-        if state.is_connected:
-            print("Drone discovered!")
-            break
-
-    battery_state = {"remaining": 1.0}
-    asyncio.create_task(monitor_battery(drone, battery_state))
-
     output_folder = "img_inspection"
     os.makedirs(output_folder, exist_ok=True)
 
-    print("-- Arming & Taking off")
-    await drone.action.arm()
-    await drone.action.takeoff()
-    await stream_and_sleep(8, pipeline)
-
-    print("-- Starting offboard mode")
-    await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, -1.0, 0.0))
-    try:
-        await drone.offboard.start()
-    except OffboardError as error:
-        print(f"Offboard failed: {error}")
-        await drone.action.disarm()
-        pipeline.stop()
-        return
+    print("\n-- [SIM] Arming (simulated)")
+    print("-- [SIM] Taking off (simulated)")
+    await stream_and_sleep(3, pipeline)
 
     print("\n-- Starting Close-up Inspection")
-    CLOSE_UP_OFFSET = 0.5 
-    abort_mission = False
+    print("-" * 60)
+
+    CLOSE_UP_OFFSET = 0.5
     report_data = []
 
-    for crack in target_cracks:
-        if abort_mission: break
+    for i, crack in enumerate(target_cracks, 1):
+        cid = crack["id"]
+        n = crack["x"] + CLOSE_UP_OFFSET
+        e = crack["y"]
+        d = crack["z"]
 
-        if battery_state["remaining"] < 0.20:
-            print(f"CRITICAL: Battery low ({battery_state['remaining']*100:.1f}%). Aborting inspection!")
-            abort_mission = True
-            break
+        print(f"\n  [{i}/{len(target_cracks)}] Flying to Crack {cid} at [N:{n:.2f}, E:{e:.2f}, D:{d:.2f}]...")
+        print(f"        Type: {crack['crack_type']} | Confidence: {crack['confidence']:.2f}")
+        print("        [SIM] Drone moving to position...")
+        await stream_and_sleep(4, pipeline)
 
-        cid, n, e, d = crack['id'], crack['x'] + CLOSE_UP_OFFSET, crack['y'], crack['z']
-        print(f"\n>> Flying to Crack {cid} at [N:{n:.2f}, E:{e:.2f}, D:{d:.2f}]...")
-        
-        await drone.offboard.set_position_ned(PositionNedYaw(n, e, d, 0.0))
-        await stream_and_sleep(6, pipeline) 
-        
-        print(f"Capturing color + depth of Crack {cid}...")
-        
+        print(f"        Capturing color + depth of Crack {cid}...")
         frames = pipeline.wait_for_frames()
         aligned_frames = align.process(frames)
         color_frame = aligned_frames.get_color_frame()
@@ -248,14 +241,16 @@ async def run():
 
         if color_frame and depth_frame:
             color_image = np.asanyarray(color_frame.get_data())
-            filepath = os.path.join(output_folder, f"crack_{cid}_real_closeup.jpg")
+            filepath = os.path.join(output_folder, f"crack_{cid}_closeup.jpg")
             cv2.imwrite(filepath, color_image)
-            
+
             center_distance = depth_frame.get_distance(320, 240)
             depth_mm = round(center_distance * 1000, 2)
-            print(f"   [DATA] RealSense reports wall is {center_distance:.2f} meters away ({depth_mm:.1f} mm)")
+
+            print(f"        [DATA] Depth at center: {depth_mm:.2f} mm ({center_distance:.3f} m)")
+            print(f"        [SAVE] {filepath}")
         else:
-            print("Warning: RealSense dropped a frame during capture!")
+            print("        WARNING: RealSense dropped a frame during capture!")
 
         report_data.append({
             "waypoint_id":  cid,
@@ -273,19 +268,17 @@ async def run():
         })
 
     # Generate final report
+    print("\n" + "-" * 60)
     generate_report(report_data, "final_report.xlsx")
 
-    print("\n-- Inspection completed. Returning to launch...")
-    await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, -1.0, 0.0))
-    await stream_and_sleep(8, pipeline)
+    print("\n-- [SIM] Returning to home (simulated)")
+    await stream_and_sleep(3, pipeline)
+    print("-- [SIM] Landing (simulated)")
 
-    print("-- Landing now...")
-    await drone.offboard.stop()
-    await drone.action.land()
-    
     pipeline.stop()
     cv2.destroyAllWindows()
-    print("-- Drone landed safely.")
+    print("-- Done. RealSense stopped safely.")
+
 
 if __name__ == "__main__":
     asyncio.run(run())
