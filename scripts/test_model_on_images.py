@@ -8,98 +8,20 @@ import cv2
 import pandas as pd
 
 from validation_common import (
-    CLASS_NAMES,
+    DEFAULT_ANNOTATED_DIR,
     DEFAULT_CAPTURE_DIR,
     DEFAULT_MODEL_PATH,
-    DEFAULT_OUTPUT_DIR,
+    DEFAULT_REPORTS_DIR,
     annotate_detections,
-    calc_crack_offset,
     collect_image_paths,
     ensure_dir,
     now_timestamp,
-    parse_ned_from_filename,
     pass_fail_label,
     save_thumbnail_if_possible,
     validate_existing_dir,
     validate_existing_file,
 )
-
-
-def load_yolo(model_path: Path):
-    try:
-        from ultralytics import YOLO
-    except ImportError as exc:
-        print("ERROR: ultralytics is not installed in this Python environment.")
-        print(f"DETAIL: {exc}")
-        sys.exit(1)
-
-    print(f"[INFO] Loading model on CPU: {model_path}")
-    return YOLO(str(model_path))
-
-
-def run_inference(model, image_path: Path, conf: float):
-    start = time.perf_counter()
-    results = model.predict(source=str(image_path), conf=conf, device="cpu", imgsz=640, verbose=False)
-    latency_ms = round((time.perf_counter() - start) * 1000.0, 2)
-    return results[0], latency_ms
-
-
-def extract_detections(result, image_path: Path, latency_ms: float):
-    detections = []
-    boxes = result.boxes
-    num_detections = len(boxes)
-    ned = parse_ned_from_filename(image_path.name)
-
-    for det_index, box in enumerate(boxes, 1):
-        cls_id = int(box.cls[0])
-        confidence = float(box.conf[0])
-        crack_type = CLASS_NAMES[cls_id] if cls_id < len(CLASS_NAMES) else f"Unknown_{cls_id}"
-
-        x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
-        cx_norm, cy_norm, width_norm, height_norm = [float(v) for v in box.xywhn[0].tolist()]
-
-        offset_x, offset_y, offset_z = calc_crack_offset(cx_norm, cy_norm)
-        drone_n = drone_e = drone_d = abs_x = abs_y = abs_z = None
-        if ned is not None:
-            drone_n, drone_e, drone_d = ned
-            abs_x = round(drone_n + offset_x, 4)
-            abs_y = round(drone_e + offset_y, 4)
-            abs_z = round(drone_d + offset_z, 4)
-
-        detections.append(
-            {
-                "detection_id": f"{image_path.stem}_D{det_index:02d}",
-                "image_name": image_path.name,
-                "image_path": str(image_path),
-                "crack_detected": True,
-                "crack_type": crack_type,
-                "confidence": round(confidence, 4),
-                "latency_ms": latency_ms,
-                "num_detections": num_detections,
-                "bbox_xyxy": (x1, y1, x2, y2),
-                "bbox_x1": x1,
-                "bbox_y1": y1,
-                "bbox_x2": x2,
-                "bbox_y2": y2,
-                "bbox_width_px": x2 - x1,
-                "bbox_height_px": y2 - y1,
-                "cx_norm": round(cx_norm, 6),
-                "cy_norm": round(cy_norm, 6),
-                "width_norm": round(width_norm, 6),
-                "height_norm": round(height_norm, 6),
-                "X": offset_x,
-                "Y": offset_y,
-                "Z": offset_z,
-                "drone_N": drone_n,
-                "drone_E": drone_e,
-                "drone_D": drone_d,
-                "abs_x": abs_x,
-                "abs_y": abs_y,
-                "abs_z": abs_z,
-            }
-        )
-
-    return detections, num_detections
+from inference_core import build_clear_row, extract_detections, load_yolo, run_inference
 
 
 def build_image_summary(
@@ -109,8 +31,10 @@ def build_image_summary(
     annotated_path: Path,
     status: str,
     crack_types: str,
+    run_mode: str,
 ):
     return {
+        "run_mode": run_mode,
         "image_name": image_path.name,
         "image_path": str(image_path),
         "annotated_image": str(annotated_path),
@@ -174,8 +98,16 @@ def main():
     parser = argparse.ArgumentParser(description="Run YOLO model on saved images and export annotated images + CSV/XLSX.")
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH), help="Path to YOLO model weights.")
     parser.add_argument("--input-dir", default=str(DEFAULT_CAPTURE_DIR), help="Directory containing input images.")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for reports and annotated images.")
+    parser.add_argument("--annotated-dir", default=str(DEFAULT_ANNOTATED_DIR), help="Directory for annotated images.")
+    parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR), help="Directory for CSV/XLSX reports.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
+    parser.add_argument("--debug", action="store_true", help="Keep below-threshold detections in outputs for debugging.")
+    parser.add_argument(
+        "--run-mode",
+        default="model_only",
+        choices=["camera_only", "model_only", "camera_to_model_flow"],
+        help="Run mode label to write into outputs.",
+    )
     args = parser.parse_args()
 
     try:
@@ -185,9 +117,9 @@ def main():
         print(f"ERROR: {exc}")
         sys.exit(1)
 
-    output_dir = ensure_dir(Path(args.output_dir).expanduser().resolve())
-    annotated_dir = ensure_dir(output_dir / "annotated")
-    thumbs_dir = ensure_dir(output_dir / "thumbs")
+    annotated_dir = ensure_dir(Path(args.annotated_dir).expanduser().resolve())
+    reports_dir = ensure_dir(Path(args.reports_dir).expanduser().resolve())
+    thumbs_dir = ensure_dir(reports_dir / "thumbs")
 
     try:
         image_paths = collect_image_paths(input_dir)
@@ -209,8 +141,8 @@ def main():
             continue
 
         print(f"[INFO] [{index}/{len(image_paths)}] Running inference on {image_path.name} ...")
-        result, latency_ms = run_inference(model, image_path, args.conf)
-        detections, num_detections = extract_detections(result, image_path, latency_ms)
+        result, latency_ms = run_inference(model, image_path, args.conf, args.debug)
+        detections, num_detections = extract_detections(result, image_path, latency_ms, args.conf, args.debug, args.run_mode)
         crack_types = ", ".join(sorted({det["crack_type"] for det in detections})) if detections else ""
         status = pass_fail_label(True)
 
@@ -219,37 +151,7 @@ def main():
         cv2.imwrite(str(annotated_path), annotated_image)
 
         if not detections:
-            detection_rows.append(
-                {
-                    "detection_id": "",
-                    "image_name": image_path.name,
-                    "image_path": str(image_path),
-                    "crack_detected": False,
-                    "crack_type": "",
-                    "confidence": 0.0,
-                    "latency_ms": latency_ms,
-                    "num_detections": 0,
-                    "bbox_x1": "",
-                    "bbox_y1": "",
-                    "bbox_x2": "",
-                    "bbox_y2": "",
-                    "bbox_width_px": "",
-                    "bbox_height_px": "",
-                    "cx_norm": "",
-                    "cy_norm": "",
-                    "width_norm": "",
-                    "height_norm": "",
-                    "X": "",
-                    "Y": "",
-                    "Z": "",
-                    "drone_N": "",
-                    "drone_E": "",
-                    "drone_D": "",
-                    "abs_x": "",
-                    "abs_y": "",
-                    "abs_z": "",
-                }
-            )
+            detection_rows.append(build_clear_row(image_path, latency_ms, args.run_mode))
         else:
             detection_rows.extend(
                 [
@@ -258,16 +160,16 @@ def main():
                 ]
             )
 
-        summary_rows.append(build_image_summary(image_path, latency_ms, num_detections, annotated_path, status, crack_types))
+        summary_rows.append(build_image_summary(image_path, latency_ms, num_detections, annotated_path, status, crack_types, args.run_mode))
         print(f"[{status}] {image_path.name}: {num_detections} detection(s), {latency_ms:.2f} ms, crack_types={crack_types or 'None'}")
 
     if not summary_rows:
         print("ERROR: No images were processed successfully.")
         sys.exit(1)
 
-    per_image_csv = output_dir / "results.csv"
-    detections_csv = output_dir / "detections.csv"
-    results_xlsx = output_dir / "results.xlsx"
+    per_image_csv = reports_dir / "results.csv"
+    detections_csv = reports_dir / "detections.csv"
+    results_xlsx = reports_dir / "results.xlsx"
 
     total_detections = sum(row["num_detections"] for row in summary_rows)
     total_inference_ms = round(sum(row["latency_ms"] for row in summary_rows), 2)
@@ -294,6 +196,7 @@ def main():
     print(f"[SUCCESS] Total inference time: {total_inference_ms:.2f} ms")
     print(f"[SUCCESS] Total batch processing time: {total_processing_ms:.2f} ms ({total_processing_s:.2f} s)")
     print(f"[SUCCESS] Annotated images: {annotated_dir}")
+    print(f"[SUCCESS] Reports: {reports_dir}")
     print(f"[SUCCESS] CSV: {per_image_csv}")
     print(f"[SUCCESS] CSV: {detections_csv}")
     print(f"[SUCCESS] XLSX: {results_xlsx}")

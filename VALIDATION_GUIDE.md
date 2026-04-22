@@ -33,13 +33,18 @@ Senior-Project-missions/
 │   ├── .gitkeep
 │   └── best.pt
 ├── scripts/
+│   ├── cleanup_validation_data.py
+│   ├── inference_core.py
+│   ├── run_validation_all.sh
 │   ├── test_camera_realsense.py
 │   ├── test_model_on_images.py
 │   ├── test_camera_to_model_flow.py
 │   └── validation_common.py
 └── validation_data/
-    ├── camera_test/
-    └── test_output/
+    ├── raw_captures/
+    ├── previews/
+    ├── annotated/
+    └── reports/
 ```
 
 ## Phase 1: Camera Only
@@ -51,12 +56,13 @@ What it does:
 1. Checks that the RealSense D435 is detected over USB.
 2. Starts color and depth streams.
 3. Warms up for 60 frames by default.
-4. Captures one still frame by default.
-5. Saves images into `validation_data/camera_test/`.
-6. Prints resolution, FPS, and center depth.
-7. Ends with `PASS` or `FAIL`.
-8. Can optionally tune camera clarity settings from the command line.
-9. Keeps live preview running while waiting for the next timed capture.
+4. Saves raw captures into `validation_data/raw_captures/`.
+5. Saves preview and comparison files into `validation_data/previews/`.
+6. Saves capture reports into `validation_data/reports/`.
+7. Prints resolution, FPS, and center depth.
+8. Ends with `PASS` or `FAIL`.
+9. Can optionally tune camera clarity settings from the command line.
+10. Keeps live preview running while waiting for the next timed capture.
 
 Run:
 
@@ -78,7 +84,7 @@ python scripts/test_camera_realsense.py --num-images 5 --delay-s 5
 
 Press `q` in the preview window to stop early.
 
-Clarity tuning options:
+Clarity tuning example:
 
 ```bash
 python scripts/test_camera_realsense.py \
@@ -87,13 +93,8 @@ python scripts/test_camera_realsense.py \
   --fps 15 \
   --warmup 60 \
   --num-images 5 \
-  --delay-s 1.0 \
+  --delay-s 5 \
   --auto-exposure on \
-  --exposure 8000 \
-  --gain 16 \
-  --contrast 50 \
-  --sharpness 50 \
-  --saturation 64 \
   --save-comparison-sheet
 ```
 
@@ -101,31 +102,8 @@ Notes:
 
 - Unsupported camera options are skipped with a warning instead of crashing the run.
 - The script prints the active camera settings before capture.
-- The script writes `capture_summary.csv` into the capture folder.
-- `--save-comparison-sheet` writes a side-by-side `comparison_sheet.jpg`.
-
-Suggested image-quality test profiles:
-
-Profile A:
-```bash
-python scripts/test_camera_realsense.py --width 640 --height 480 --fps 30 --num-images 3
-```
-
-Profile B:
-```bash
-python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 30 --num-images 3
-```
-
-Profile C:
-```bash
-python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 15 --warmup 60 --num-images 5 --delay-s 1.0
-```
-
-Copy-paste full command for the higher-detail timed run:
-
-```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate && cd /home/alled/missions/Senior-Project-missions && python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 15 --warmup 60 --num-images 5 --delay-s 5
-```
+- The script writes `capture_summary.csv` into `validation_data/reports/`.
+- `--save-comparison-sheet` writes `comparison_sheet.jpg` into `validation_data/previews/`.
 
 ## Phase 2: Model on Images
 
@@ -134,18 +112,16 @@ Script: `scripts/test_model_on_images.py`
 What it does:
 
 1. Loads `models/best.pt`.
-2. Scans `validation_data/camera_test/` for images.
-3. For each image:
-   - runs YOLOv8 on Pi CPU
-   - records `latency_ms`
-   - saves an annotated output image
-   - logs image name, crack type, confidence, bounding box, and latency
-   - marks the image row as `PASS` if inference completed
-4. Writes:
-   - `validation_data/test_output/results.csv`
-   - `validation_data/test_output/detections.csv`
-   - `validation_data/test_output/results.xlsx`
-5. Prints total detections, average latency, and overall `PASS`.
+2. Scans `validation_data/raw_captures/` for raw images only.
+3. Excludes generated files such as `comparison_sheet.jpg` and annotated images from inference input.
+4. Runs YOLOv8 on Pi CPU.
+5. Records per-image `latency_ms` and total model-processing time.
+6. Saves annotated output images into `validation_data/annotated/`.
+7. Saves reports into `validation_data/reports/`.
+8. Adds `run_mode` to outputs.
+9. Uses stable no-detection rows like `<image_stem>_CLEAR`.
+10. Uses `LOCAL_VALIDATION_ONLY` placeholders for mission-only coordinate fields when Mission 1 NED is unavailable.
+11. Does not include below-threshold detections in final outputs unless `--debug` is enabled.
 
 Run:
 
@@ -155,10 +131,10 @@ python scripts/test_model_on_images.py
 
 Outputs:
 
-- Annotated images: `/home/alled/missions/Senior-Project-missions/validation_data/test_output/annotated`
-- Per-image CSV: `/home/alled/missions/Senior-Project-missions/validation_data/test_output/results.csv`
-- Detection CSV: `/home/alled/missions/Senior-Project-missions/validation_data/test_output/detections.csv`
-- XLSX report: `/home/alled/missions/Senior-Project-missions/validation_data/test_output/results.xlsx`
+- Annotated images: `/home/alled/missions/Senior-Project-missions/validation_data/annotated`
+- Per-image CSV: `/home/alled/missions/Senior-Project-missions/validation_data/reports/results.csv`
+- Detection CSV: `/home/alled/missions/Senior-Project-missions/validation_data/reports/detections.csv`
+- XLSX report: `/home/alled/missions/Senior-Project-missions/validation_data/reports/results.xlsx`
 
 ## Phase 3: Camera to Model Combined
 
@@ -167,11 +143,13 @@ Script: `scripts/test_camera_to_model_flow.py`
 What it does:
 
 1. Runs the camera capture stage.
-2. Saves images into `validation_data/camera_test/`.
-3. Runs model inference on those images.
-4. Saves annotated outputs and reports into `validation_data/test_output/`.
-5. Prints capture-stage latency, model-stage latency, and full end-to-end latency.
-6. Ends with `PASS` or `FAIL`.
+2. Saves raw captures into `validation_data/raw_captures/`.
+3. Saves previews into `validation_data/previews/`.
+4. Runs model inference on those images.
+5. Saves annotated outputs into `validation_data/annotated/`.
+6. Saves reports into `validation_data/reports/`.
+7. Prints capture-stage latency, model-stage latency, and full end-to-end latency.
+8. Ends with `PASS` or `FAIL`.
 
 Run:
 
@@ -184,8 +162,10 @@ Combined flow with camera tuning options:
 ```bash
 python scripts/test_camera_to_model_flow.py \
   --model /home/alled/missions/Senior-Project-missions/models/best.pt \
-  --capture-dir /home/alled/missions/Senior-Project-missions/validation_data/camera_test \
-  --output-dir /home/alled/missions/Senior-Project-missions/validation_data/test_output \
+  --capture-dir /home/alled/missions/Senior-Project-missions/validation_data/raw_captures \
+  --preview-dir /home/alled/missions/Senior-Project-missions/validation_data/previews \
+  --annotated-dir /home/alled/missions/Senior-Project-missions/validation_data/annotated \
+  --reports-dir /home/alled/missions/Senior-Project-missions/validation_data/reports \
   --width 1280 \
   --height 720 \
   --fps 15 \
@@ -208,8 +188,6 @@ python scripts/test_camera_to_model_flow.py \
 If you want to run cleanup, Phase 1, Phase 2, and Phase 3 in one command:
 
 ```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
-cd /home/alled/missions/Senior-Project-missions
 bash scripts/run_validation_all.sh
 ```
 
@@ -233,4 +211,6 @@ python scripts/cleanup_validation_data.py --all
 
 - The model path defaults to `models/best.pt`.
 - The fuller walkthrough is in `docs/validation_workflow.md`.
-- If an image filename matches Mission 1 format like `img_0.00_-1.00_-3.00.jpg`, the detection outputs also include Mission 1 style NED-based crack position fields.
+- If an image filename matches Mission 1 format like `img_0.00_-1.00_-3.00.jpg`, the detection outputs include Mission 1 style NED-based crack position fields.
+- If Mission 1 NED is not available in local validation mode, `drone_N`, `drone_E`, `drone_D`, `abs_x`, `abs_y`, and `abs_z` are filled with `LOCAL_VALIDATION_ONLY`.
+- The reusable inference helper for the next Mission 1 integration step is `scripts/inference_core.py`.

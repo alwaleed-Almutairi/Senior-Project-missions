@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 
-from validation_common import DEFAULT_CAPTURE_DIR, DEFAULT_MODEL_PATH, DEFAULT_OUTPUT_DIR, ensure_dir
+from validation_common import DEFAULT_ANNOTATED_DIR, DEFAULT_CAPTURE_DIR, DEFAULT_MODEL_PATH, DEFAULT_PREVIEW_DIR, DEFAULT_REPORTS_DIR, ensure_dir
 
 
 def run_step(command):
@@ -20,7 +20,9 @@ def main():
     parser = argparse.ArgumentParser(description="Local end-to-end validation: RealSense capture -> saved images -> model inference.")
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH), help="Path to YOLO model weights.")
     parser.add_argument("--capture-dir", default=str(DEFAULT_CAPTURE_DIR), help="Directory where camera test images will be saved.")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory for inference outputs.")
+    parser.add_argument("--preview-dir", default=str(DEFAULT_PREVIEW_DIR), help="Directory for preview/comparison artifacts.")
+    parser.add_argument("--annotated-dir", default=str(DEFAULT_ANNOTATED_DIR), help="Directory for annotated inference outputs.")
+    parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR), help="Directory for CSV/XLSX and capture summaries.")
     parser.add_argument("--width", type=int, default=640, help="Color and depth stream width.")
     parser.add_argument("--height", type=int, default=480, help="Color and depth stream height.")
     parser.add_argument("--fps", type=int, default=30, help="Camera FPS.")
@@ -37,10 +39,13 @@ def main():
     parser.add_argument("--save-comparison-sheet", action="store_true", help="Save comparison sheet during the capture phase.")
     parser.add_argument("--no-preview", action="store_true", help="Disable live preview in the capture phase.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold for inference.")
+    parser.add_argument("--debug", action="store_true", help="Keep below-threshold detections in reports during model inference.")
     args = parser.parse_args()
 
     capture_dir = ensure_dir(Path(args.capture_dir).expanduser().resolve())
-    output_dir = ensure_dir(Path(args.output_dir).expanduser().resolve())
+    preview_dir = ensure_dir(Path(args.preview_dir).expanduser().resolve())
+    annotated_dir = ensure_dir(Path(args.annotated_dir).expanduser().resolve())
+    reports_dir = ensure_dir(Path(args.reports_dir).expanduser().resolve())
     scripts_dir = Path(__file__).resolve().parent
 
     capture_script = scripts_dir / "test_camera_realsense.py"
@@ -48,8 +53,12 @@ def main():
     capture_command = [
         sys.executable,
         str(capture_script),
-        "--output-dir",
+        "--capture-dir",
         str(capture_dir),
+        "--preview-dir",
+        str(preview_dir),
+        "--reports-dir",
+        str(reports_dir),
         "--width",
         str(args.width),
         "--height",
@@ -80,23 +89,29 @@ def main():
         capture_command.append("--save-comparison-sheet")
     if args.no_preview:
         capture_command.append("--no-preview")
+    capture_command.extend(["--run-mode", "camera_to_model_flow"])
+    model_command = [
+        sys.executable,
+        str(model_script),
+        "--model",
+        args.model,
+        "--input-dir",
+        str(capture_dir),
+        "--annotated-dir",
+        str(annotated_dir),
+        "--reports-dir",
+        str(reports_dir),
+        "--conf",
+        str(args.conf),
+        "--run-mode",
+        "camera_to_model_flow",
+    ]
+    if args.debug:
+        model_command.append("--debug")
 
     try:
         capture_ms = run_step(capture_command)
-        model_ms = run_step(
-            [
-                sys.executable,
-                str(model_script),
-                "--model",
-                args.model,
-                "--input-dir",
-                str(capture_dir),
-                "--output-dir",
-                str(output_dir),
-                "--conf",
-                str(args.conf),
-            ]
-        )
+        model_ms = run_step(model_command)
     except Exception as exc:
         print(f"[ERROR] End-to-end validation failed: {exc}")
         sys.exit(1)
@@ -104,7 +119,9 @@ def main():
     print("-" * 64)
     print("[SUCCESS] Local camera -> model validation completed.")
     print(f"[SUCCESS] Captured images: {capture_dir}")
-    print(f"[SUCCESS] Outputs: {output_dir}")
+    print(f"[SUCCESS] Preview artifacts: {preview_dir}")
+    print(f"[SUCCESS] Annotated outputs: {annotated_dir}")
+    print(f"[SUCCESS] Reports: {reports_dir}")
     print(f"[SUCCESS] Capture stage latency: {capture_ms:.2f} ms")
     print(f"[SUCCESS] Model stage latency: {model_ms:.2f} ms")
     print(f"[SUCCESS] End-to-end latency: {capture_ms + model_ms:.2f} ms")

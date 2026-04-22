@@ -12,8 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = PROJECT_ROOT / "models"
 VALIDATION_DATA_DIR = PROJECT_ROOT / "validation_data"
 DEFAULT_MODEL_PATH = MODELS_DIR / "best.pt"
-DEFAULT_CAPTURE_DIR = VALIDATION_DATA_DIR / "camera_test"
-DEFAULT_OUTPUT_DIR = VALIDATION_DATA_DIR / "test_output"
+DEFAULT_CAPTURE_DIR = VALIDATION_DATA_DIR / "raw_captures"
+DEFAULT_PREVIEW_DIR = VALIDATION_DATA_DIR / "previews"
+DEFAULT_ANNOTATED_DIR = VALIDATION_DATA_DIR / "annotated"
+DEFAULT_REPORTS_DIR = VALIDATION_DATA_DIR / "reports"
 DOCS_DIR = PROJECT_ROOT / "docs"
 CLASS_NAMES = [
     "Corrosion",
@@ -51,7 +53,15 @@ def validate_existing_file(path_str: str, label: str) -> Path:
 
 
 def collect_image_paths(input_dir: Path) -> List[Path]:
-    image_paths = [p for p in sorted(input_dir.iterdir()) if p.suffix.lower() in IMAGE_EXTENSIONS and p.is_file()]
+    excluded_names = {"comparison_sheet.jpg"}
+    image_paths = [
+        p
+        for p in sorted(input_dir.iterdir())
+        if p.is_file()
+        and p.suffix.lower() in IMAGE_EXTENSIONS
+        and p.name not in excluded_names
+        and not p.stem.endswith("_annotated")
+    ]
     if not image_paths:
         raise FileNotFoundError(f"No supported image files found in: {input_dir}")
     return image_paths

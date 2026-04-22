@@ -1,29 +1,31 @@
+source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
+cd /home/alled/missions/Senior-Project-missions
+
 python scripts/test_camera_to_model_flow.py \
   --model /home/alled/missions/Senior-Project-missions/models/best.pt \
-  --capture-dir /home/alled/missions/Senior-Project-missions/validation_data/camera_test \
-  --output-dir /home/alled/missions/Senior-Project-missions/validation_data/test_output \
+  --capture-dir /home/alled/missions/Senior-Project-missions/validation_data/raw_captures \
+  --preview-dir /home/alled/missions/Senior-Project-missions/validation_data/previews \
+  --annotated-dir /home/alled/missions/Senior-Project-missions/validation_data/annotated \
+  --reports-dir /home/alled/missions/Senior-Project-missions/validation_data/reports \
   --width 1280 \
   --height 720 \
+  --fps 15 \
   --num-images 5 \
   --warmup-frames 60 \
   --delay-s 5 \
+  --auto-exposure on \
+  --save-comparison-sheet \
   --conf 0.25
 
 
+Live camera-only comparison run:
 
-
-
-
-
-
-
-
-with live comparison output 
 python scripts/test_camera_realsense.py \
   --width 1280 \
   --height 720 \
   --fps 15 \
   --warmup 60 \
   --num-images 5 \
-  --delay-s 5
-
+  --delay-s 5 \
+  --auto-exposure on \
+  --save-comparison-sheet

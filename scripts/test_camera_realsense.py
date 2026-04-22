@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from validation_common import DEFAULT_CAPTURE_DIR, ensure_dir, pass_fail_label
+from validation_common import DEFAULT_CAPTURE_DIR, DEFAULT_PREVIEW_DIR, DEFAULT_REPORTS_DIR, ensure_dir, pass_fail_label
 
 
 WINDOW_NAME = "RealSense Live Preview"
@@ -199,9 +199,10 @@ def capture_images(pipeline, align, output_dir: Path, num_images: int, delay_s: 
     return saved_paths, capture_stats
 
 
-def write_capture_summary(output_dir: Path, capture_stats, settings_report, args):
-    summary_path = output_dir / "capture_summary.csv"
+def write_capture_summary(reports_dir: Path, capture_stats, settings_report, args):
+    summary_path = reports_dir / "capture_summary.csv"
     fieldnames = [
+        "run_mode",
         "image_path",
         "resolution",
         "center_depth_mm",
@@ -224,6 +225,7 @@ def write_capture_summary(output_dir: Path, capture_stats, settings_report, args
         for image_stat in capture_stats:
             for setting in settings_report if first else [None]:
                 row = {
+                    "run_mode": args.run_mode,
                     "image_path": str(image_stat["path"]),
                     "resolution": image_stat["resolution"],
                     "center_depth_mm": image_stat["center_depth_mm"],
@@ -242,7 +244,7 @@ def write_capture_summary(output_dir: Path, capture_stats, settings_report, args
     return summary_path
 
 
-def save_comparison_sheet(output_dir: Path, image_paths):
+def save_comparison_sheet(preview_dir: Path, image_paths):
     images = [cv2.imread(str(path)) for path in image_paths]
     images = [image for image in images if image is not None]
     if not images:
@@ -266,14 +268,16 @@ def save_comparison_sheet(output_dir: Path, image_paths):
         padded.append(img)
 
     sheet = cv2.hconcat(padded)
-    output_path = output_dir / "comparison_sheet.jpg"
+    output_path = preview_dir / "comparison_sheet.jpg"
     cv2.imwrite(str(output_path), sheet)
     return output_path
 
 
 def main():
     parser = argparse.ArgumentParser(description="RealSense camera-only validation: device detect, stream start, warm-up, capture, save.")
-    parser.add_argument("--output-dir", default=str(DEFAULT_CAPTURE_DIR), help="Folder where captured images will be saved.")
+    parser.add_argument("--capture-dir", default=str(DEFAULT_CAPTURE_DIR), help="Folder where raw captured images will be saved.")
+    parser.add_argument("--preview-dir", default=str(DEFAULT_PREVIEW_DIR), help="Folder where comparison and preview artifacts will be saved.")
+    parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR), help="Folder where capture reports will be saved.")
     parser.add_argument("--num-images", type=int, default=1, help="Number of images to capture.")
     parser.add_argument("--warmup-frames", type=int, default=60, help="How many initial frames to discard before capture.")
     parser.add_argument("--width", type=int, default=640, help="Color stream width.")
@@ -290,6 +294,12 @@ def main():
     parser.add_argument("--saturation", type=float, default=None, help="Saturation value, if supported.")
     parser.add_argument("--save-comparison-sheet", action="store_true", help="Save a side-by-side image comparison sheet.")
     parser.add_argument("--no-preview", action="store_true", help="Disable the OpenCV live preview window.")
+    parser.add_argument(
+        "--run-mode",
+        default="camera_only",
+        choices=["camera_only", "model_only", "camera_to_model_flow"],
+        help="Run mode label to write into outputs.",
+    )
     args = parser.parse_args()
 
     if args.num_images < 1:
@@ -315,8 +325,12 @@ def main():
     for idx, device in enumerate(devices, 1):
         print(f"  {idx}. {device['name']} | S/N: {device['serial']} | FW: {device['firmware']}")
 
-    output_dir = ensure_dir(Path(args.output_dir).expanduser().resolve())
-    print(f"[INFO] Images will be saved to: {output_dir}")
+    capture_dir = ensure_dir(Path(args.capture_dir).expanduser().resolve())
+    preview_dir = ensure_dir(Path(args.preview_dir).expanduser().resolve())
+    reports_dir = ensure_dir(Path(args.reports_dir).expanduser().resolve())
+    print(f"[INFO] Raw captures will be saved to: {capture_dir}")
+    print(f"[INFO] Preview artifacts will be saved to: {preview_dir}")
+    print(f"[INFO] Reports will be saved to: {reports_dir}")
     show_live = not args.no_preview
     if show_live:
         print("[INFO] Live preview enabled. Press Ctrl+C to stop if needed.")
@@ -341,9 +355,9 @@ def main():
         )
         preview = warmup_frames(pipeline, align, args.warmup_frames, show_live)
         print(f"[OK] Camera stream is live. Last warm-up frame shape: {preview.shape}")
-        saved_paths, capture_stats = capture_images(pipeline, align, output_dir, args.num_images, args.delay_s, show_live)
-        summary_path = write_capture_summary(output_dir, capture_stats, settings_report, args)
-        comparison_path = save_comparison_sheet(output_dir, saved_paths) if args.save_comparison_sheet else None
+        saved_paths, capture_stats = capture_images(pipeline, align, capture_dir, args.num_images, args.delay_s, show_live)
+        summary_path = write_capture_summary(reports_dir, capture_stats, settings_report, args)
+        comparison_path = save_comparison_sheet(preview_dir, saved_paths) if args.save_comparison_sheet else None
     except Exception as exc:
         print(f"❌ FAIL: RealSense validation failed: {exc}")
         sys.exit(1)

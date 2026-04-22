@@ -3,7 +3,17 @@ import shutil
 import sys
 from pathlib import Path
 
-from validation_common import DEFAULT_CAPTURE_DIR, DEFAULT_OUTPUT_DIR, VALIDATION_DATA_DIR, ensure_dir
+from validation_common import (
+    DEFAULT_ANNOTATED_DIR,
+    DEFAULT_CAPTURE_DIR,
+    DEFAULT_PREVIEW_DIR,
+    DEFAULT_REPORTS_DIR,
+    VALIDATION_DATA_DIR,
+    ensure_dir,
+)
+
+LEGACY_CAPTURE_DIR = VALIDATION_DATA_DIR / "camera_test"
+LEGACY_OUTPUT_DIR = VALIDATION_DATA_DIR / "test_output"
 
 
 def clear_directory_contents(path: Path):
@@ -27,17 +37,17 @@ def main():
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Delete both camera_test and test_output contents.",
+        help="Delete raw captures, previews, annotated outputs, and reports.",
     )
     parser.add_argument(
         "--captures-only",
         action="store_true",
-        help="Delete only validation_data/camera_test contents.",
+        help="Delete only raw captured images.",
     )
     parser.add_argument(
         "--outputs-only",
         action="store_true",
-        help="Delete only validation_data/test_output contents.",
+        help="Delete previews, annotated outputs, and reports.",
     )
     args = parser.parse_args()
 
@@ -47,11 +57,18 @@ def main():
         sys.exit(1)
 
     if args.captures_only:
-        targets = [DEFAULT_CAPTURE_DIR]
+        targets = [DEFAULT_CAPTURE_DIR, LEGACY_CAPTURE_DIR]
     elif args.outputs_only:
-        targets = [DEFAULT_OUTPUT_DIR]
+        targets = [DEFAULT_PREVIEW_DIR, DEFAULT_ANNOTATED_DIR, DEFAULT_REPORTS_DIR, LEGACY_OUTPUT_DIR]
     else:
-        targets = [DEFAULT_CAPTURE_DIR, DEFAULT_OUTPUT_DIR]
+        targets = [
+            DEFAULT_CAPTURE_DIR,
+            DEFAULT_PREVIEW_DIR,
+            DEFAULT_ANNOTATED_DIR,
+            DEFAULT_REPORTS_DIR,
+            LEGACY_CAPTURE_DIR,
+            LEGACY_OUTPUT_DIR,
+        ]
 
     ensure_dir(VALIDATION_DATA_DIR)
 
@@ -60,8 +77,13 @@ def main():
     print("=" * 64)
 
     total_removed = 0
+    active_dirs = {DEFAULT_CAPTURE_DIR, DEFAULT_PREVIEW_DIR, DEFAULT_ANNOTATED_DIR, DEFAULT_REPORTS_DIR}
     for target in targets:
-        ensure_dir(target)
+        if target in active_dirs:
+            ensure_dir(target)
+        elif not target.exists():
+            print(f"[OK] Skipped missing legacy folder: {target}")
+            continue
         removed = clear_directory_contents(target)
         total_removed += removed
         print(f"[OK] Cleared {removed} item(s) from {target}")
