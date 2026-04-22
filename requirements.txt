@@ -1,0 +1,7 @@
+numpy
+opencv-python
+openpyxl
+pandas
+pillow
+pyrealsense2
+ultralytics
