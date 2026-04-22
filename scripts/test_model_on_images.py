@@ -130,10 +130,11 @@ def write_csv(rows, path: Path, fieldnames):
             writer.writerow(row)
 
 
-def write_xlsx(summary_rows, detection_rows, xlsx_path: Path, thumbs_dir: Path):
+def write_xlsx(summary_rows, detection_rows, summary_metrics, xlsx_path: Path, thumbs_dir: Path):
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         pd.DataFrame(summary_rows).to_excel(writer, sheet_name="PerImage", index=False)
         pd.DataFrame(detection_rows).to_excel(writer, sheet_name="Detections", index=False)
+        pd.DataFrame(summary_metrics).to_excel(writer, sheet_name="Summary", index=False)
 
         workbook = writer.book
         ws = writer.sheets["PerImage"]
@@ -163,6 +164,10 @@ def write_xlsx(summary_rows, detection_rows, xlsx_path: Path, thumbs_dir: Path):
                 image.height = 120
                 ws.add_image(image, f"I{row_index}")
                 ws.row_dimensions[row_index].height = 95
+
+        ws_summary = writer.sheets["Summary"]
+        ws_summary.column_dimensions["A"].width = 32
+        ws_summary.column_dimensions["B"].width = 24
 
 
 def main():
@@ -195,6 +200,7 @@ def main():
 
     summary_rows = []
     detection_rows = []
+    batch_started = time.perf_counter()
 
     for index, image_path in enumerate(image_paths, 1):
         image = cv2.imread(str(image_path))
@@ -263,16 +269,30 @@ def main():
     detections_csv = output_dir / "detections.csv"
     results_xlsx = output_dir / "results.xlsx"
 
+    total_detections = sum(row["num_detections"] for row in summary_rows)
+    total_inference_ms = round(sum(row["latency_ms"] for row in summary_rows), 2)
+    total_processing_ms = round((time.perf_counter() - batch_started) * 1000.0, 2)
+    total_processing_s = round(total_processing_ms / 1000.0, 2)
+    avg_latency = sum(row["latency_ms"] for row in summary_rows) / len(summary_rows)
+    summary_metrics = [
+        {"metric": "images_processed", "value": len(summary_rows)},
+        {"metric": "total_detections", "value": total_detections},
+        {"metric": "average_latency_ms_per_image", "value": round(avg_latency, 2)},
+        {"metric": "total_inference_time_ms", "value": total_inference_ms},
+        {"metric": "total_batch_processing_time_ms", "value": total_processing_ms},
+        {"metric": "total_batch_processing_time_s", "value": total_processing_s},
+    ]
+
     write_csv(summary_rows, per_image_csv, list(summary_rows[0].keys()))
     write_csv(detection_rows, detections_csv, list(detection_rows[0].keys()))
-    write_xlsx(summary_rows, detection_rows, results_xlsx, thumbs_dir)
+    write_xlsx(summary_rows, detection_rows, summary_metrics, results_xlsx, thumbs_dir)
 
-    total_detections = sum(row["num_detections"] for row in summary_rows)
-    avg_latency = sum(row["latency_ms"] for row in summary_rows) / len(summary_rows)
     print("-" * 64)
     print(f"[SUCCESS] Processed {len(summary_rows)} image(s)")
     print(f"[SUCCESS] Total detections: {total_detections}")
     print(f"[SUCCESS] Average latency: {avg_latency:.2f} ms/image")
+    print(f"[SUCCESS] Total inference time: {total_inference_ms:.2f} ms")
+    print(f"[SUCCESS] Total batch processing time: {total_processing_ms:.2f} ms ({total_processing_s:.2f} s)")
     print(f"[SUCCESS] Annotated images: {annotated_dir}")
     print(f"[SUCCESS] CSV: {per_image_csv}")
     print(f"[SUCCESS] CSV: {detections_csv}")

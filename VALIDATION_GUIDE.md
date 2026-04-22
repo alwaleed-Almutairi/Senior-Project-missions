@@ -12,6 +12,17 @@ cd /home/alled/missions/Senior-Project-missions
 python -m pip install -r requirements.txt
 ```
 
+## How To Run Anything In This Repo
+
+For every validation command below, start from a terminal and run:
+
+```bash
+source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
+cd /home/alled/missions/Senior-Project-missions
+```
+
+After that, run the specific script command you want.
+
 ## Project Layout
 
 ```text
@@ -44,12 +55,12 @@ What it does:
 5. Saves images into `validation_data/camera_test/`.
 6. Prints resolution, FPS, and center depth.
 7. Ends with `PASS` or `FAIL`.
+8. Can optionally tune camera clarity settings from the command line.
+9. Keeps live preview running while waiting for the next timed capture.
 
 Run:
 
 ```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
-cd /home/alled/missions/Senior-Project-missions
 python scripts/test_camera_realsense.py
 ```
 
@@ -57,6 +68,63 @@ Optional live-preview headless override:
 
 ```bash
 python scripts/test_camera_realsense.py --no-preview
+```
+
+Capture every 5 seconds while keeping the preview live:
+
+```bash
+python scripts/test_camera_realsense.py --num-images 5 --delay-s 5
+```
+
+Press `q` in the preview window to stop early.
+
+Clarity tuning options:
+
+```bash
+python scripts/test_camera_realsense.py \
+  --width 1280 \
+  --height 720 \
+  --fps 15 \
+  --warmup 60 \
+  --num-images 5 \
+  --delay-s 1.0 \
+  --auto-exposure on \
+  --exposure 8000 \
+  --gain 16 \
+  --contrast 50 \
+  --sharpness 50 \
+  --saturation 64 \
+  --save-comparison-sheet
+```
+
+Notes:
+
+- Unsupported camera options are skipped with a warning instead of crashing the run.
+- The script prints the active camera settings before capture.
+- The script writes `capture_summary.csv` into the capture folder.
+- `--save-comparison-sheet` writes a side-by-side `comparison_sheet.jpg`.
+
+Suggested image-quality test profiles:
+
+Profile A:
+```bash
+python scripts/test_camera_realsense.py --width 640 --height 480 --fps 30 --num-images 3
+```
+
+Profile B:
+```bash
+python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 30 --num-images 3
+```
+
+Profile C:
+```bash
+python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 15 --warmup 60 --num-images 5 --delay-s 1.0
+```
+
+Copy-paste full command for the higher-detail timed run:
+
+```bash
+source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate && cd /home/alled/missions/Senior-Project-missions && python scripts/test_camera_realsense.py --width 1280 --height 720 --fps 15 --warmup 60 --num-images 5 --delay-s 5
 ```
 
 ## Phase 2: Model on Images
@@ -82,8 +150,6 @@ What it does:
 Run:
 
 ```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
-cd /home/alled/missions/Senior-Project-missions
 python scripts/test_model_on_images.py
 ```
 
@@ -110,9 +176,25 @@ What it does:
 Run:
 
 ```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
-cd /home/alled/missions/Senior-Project-missions
 python scripts/test_camera_to_model_flow.py
+```
+
+Combined flow with camera tuning options:
+
+```bash
+python scripts/test_camera_to_model_flow.py \
+  --model /home/alled/missions/Senior-Project-missions/models/best.pt \
+  --capture-dir /home/alled/missions/Senior-Project-missions/validation_data/camera_test \
+  --output-dir /home/alled/missions/Senior-Project-missions/validation_data/test_output \
+  --width 1280 \
+  --height 720 \
+  --fps 15 \
+  --num-images 5 \
+  --warmup-frames 60 \
+  --delay-s 5 \
+  --auto-exposure on \
+  --save-comparison-sheet \
+  --conf 0.25
 ```
 
 ## Recommended Order
@@ -121,13 +203,21 @@ python scripts/test_camera_to_model_flow.py
 2. Run Phase 2 and only continue if it passes.
 3. Run Phase 3 to validate the full local flow.
 
+## One-Command Full Run
+
+If you want to run cleanup, Phase 1, Phase 2, and Phase 3 in one command:
+
+```bash
+source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
+cd /home/alled/missions/Senior-Project-missions
+bash scripts/run_validation_all.sh
+```
+
 ## Cleanup
 
 If you want to delete the local test images and generated outputs, run:
 
 ```bash
-source /home/alled/missions/Senior-Project-missions/.venv312/bin/activate
-cd /home/alled/missions/Senior-Project-missions
 python scripts/cleanup_validation_data.py
 ```
 
